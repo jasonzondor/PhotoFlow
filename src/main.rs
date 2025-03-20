@@ -1,12 +1,11 @@
 use iced::{
     executor,
-    widget::{button, column, container, row, scrollable, text, Column, Container},
+    widget::{button, column, container, row, text},
     Application, Command, Element, Length, Settings, Theme,
 };
 use std::path::PathBuf;
 use tracing::{info, debug};
 use image::DynamicImage;
-use anyhow::Result;
 
 mod photo;
 mod ui;
@@ -26,7 +25,8 @@ pub fn main() -> iced::Result {
 
 #[derive(Debug)]
 struct PhotoFlow {
-    photos: Vec<Photo>,
+    photo_paths: Vec<PathBuf>,
+    photos: Vec<Option<Photo>>,
     current_photo: Option<usize>,
     photo_view: PhotoView,
     error: Option<String>,
@@ -52,6 +52,7 @@ impl Application for PhotoFlow {
     fn new(_flags: ()) -> (Self, Command<Message>) {
         (
             Self {
+                photo_paths: Vec::new(),
                 photos: Vec::new(),
                 current_photo: None,
                 photo_view: PhotoView::new(),
@@ -102,30 +103,41 @@ impl Application for PhotoFlow {
             Message::DirectoryLoaded(paths) => {
                 debug!("Directory loaded with {} paths", paths.len());
                 self.error = None;
-                let photos: Vec<_> = paths
-                    .iter()
-                    .filter_map(|path| {
-                        debug!("Attempting to load photo: {}", path.display());
-                        Photo::new(path.clone()).ok()
-                    })
-                    .collect();
                 
-                if !photos.is_empty() {
-                    self.photos = photos;
+                if !paths.is_empty() {
+                    // Store paths and initialize photos vector with None
+                    let paths_len = paths.len();
+                    let first_path = paths[0].clone();
+                    self.photo_paths = paths;
+                    self.photos = vec![None; paths_len];
                     self.current_photo = Some(0);
                     
-                    // Load the first image
-                    if let Some(photo) = self.photos.first() {
-                        let path = photo.path().to_path_buf();
-                        let path_clone = path.clone();
-                        let photo_clone = photo.clone();
-                        return Command::perform(
-                            async move { photo_clone.load_image() },
-                            move |result| Message::ImageLoaded(path_clone, result.ok())
-                        );
-                    }
-                } else if !paths.is_empty() {
-                    self.error = Some("No valid photos found in directory".to_string());
+                    // Load only the first photo
+                    let first_path_clone = first_path.clone();
+                    return Command::perform(
+                        async move {
+                            match Photo::new(first_path.clone()) {
+                                Ok(mut photo) => {
+                                    if let Ok(image) = photo.load_image() {
+                                        photo.set_image(image);
+                                        Some(photo)
+                                    } else {
+                                        None
+                                    }
+                                },
+                                Err(_) => None
+                            }
+                        },
+                        move |result| {
+                            if let Some(photo) = result {
+                                Message::ImageLoaded(first_path_clone, photo.image)
+                            } else {
+                                Message::Error(format!("Failed to load image: {}", first_path_clone.display()))
+                            }
+                        }
+                    );
+                } else {
+                    self.error = Some("No photos found in directory".to_string());
                 }
                 
                 Command::none()
@@ -133,29 +145,68 @@ impl Application for PhotoFlow {
             Message::PhotoSelected(index) => {
                 if index < self.photos.len() {
                     self.current_photo = Some(index);
-                    let photo = &self.photos[index];
-                    let path = photo.path().to_path_buf();
-                    let path_clone = path.clone();
-                    let photo_clone = photo.clone();
-                    return Command::perform(
-                        async move { photo_clone.load_image() },
-                        move |result| Message::ImageLoaded(path_clone, result.ok())
-                    );
+                    
+                    // If photo isn't loaded yet, load it
+                    if self.photos[index].is_none() {
+                        let path = self.photo_paths[index].clone();
+                        let path_clone = path.clone();
+                        return Command::perform(
+                            async move {
+                                match Photo::new(path.clone()) {
+                                    Ok(mut photo) => {
+                                        if let Ok(image) = photo.load_image() {
+                                            photo.set_image(image.clone());
+                                            Some((photo, image))
+                                        } else {
+                                            None
+                                        }
+                                    },
+                                    Err(_) => None
+                                }
+                            },
+                            move |result| {
+                                if let Some((photo, image)) = result {
+                                    Message::ImageLoaded(path_clone, Some(image))
+                                } else {
+                                    Message::Error(format!("Failed to load image: {}", path_clone.display()))
+                                }
+                            }
+                        );
+                    }
                 }
                 Command::none()
             }
             Message::NextPhoto => {
                 if let Some(current) = self.current_photo {
                     if current + 1 < self.photos.len() {
-                        self.current_photo = Some(current + 1);
-                        let photo = &self.photos[current + 1];
-                        let path = photo.path().to_path_buf();
-                        let path_clone = path.clone();
-                        let photo_clone = photo.clone();
-                        return Command::perform(
-                            async move { photo_clone.load_image() },
-                            move |result| Message::ImageLoaded(path_clone, result.ok())
-                        );
+                        let next = current + 1;
+                        if self.photos[next].is_none() {
+                            let path = self.photo_paths[next].clone();
+                            let path_clone = path.clone();
+                            return Command::perform(
+                                async move {
+                                    match Photo::new(path.clone()) {
+                                        Ok(mut photo) => {
+                                            if let Ok(image) = photo.load_image() {
+                                                photo.set_image(image);
+                                                Some(photo)
+                                            } else {
+                                                None
+                                            }
+                                        },
+                                        Err(_) => None
+                                    }
+                                },
+                                move |result| {
+                                    if let Some(photo) = result {
+                                        Message::ImageLoaded(path_clone, photo.image)
+                                    } else {
+                                        Message::Error(format!("Failed to load image: {}", path_clone.display()))
+                                    }
+                                }
+                            );
+                        }
+                        self.current_photo = Some(next);
                     }
                 }
                 Command::none()
@@ -164,14 +215,32 @@ impl Application for PhotoFlow {
                 if let Some(current) = self.current_photo {
                     if current > 0 {
                         self.current_photo = Some(current - 1);
-                        let photo = &self.photos[current - 1];
-                        let path = photo.path().to_path_buf();
-                        let path_clone = path.clone();
-                        let photo_clone = photo.clone();
-                        return Command::perform(
-                            async move { photo_clone.load_image() },
-                            move |result| Message::ImageLoaded(path_clone, result.ok())
-                        );
+                        if self.photos[current - 1].is_none() {
+                            let path = self.photo_paths[current - 1].clone();
+                            let path_clone = path.clone();
+                            return Command::perform(
+                                async move {
+                                    match Photo::new(path.clone()) {
+                                        Ok(mut photo) => {
+                                            if let Ok(image) = photo.load_image() {
+                                                photo.set_image(image);
+                                                Some(photo)
+                                            } else {
+                                                None
+                                            }
+                                        },
+                                        Err(_) => None
+                                    }
+                                },
+                                move |result| {
+                                    if let Some(photo) = result {
+                                        Message::ImageLoaded(path_clone, photo.image)
+                                    } else {
+                                        Message::Error(format!("Failed to load image: {}", path_clone.display()))
+                                    }
+                                }
+                            );
+                        }
                     }
                 }
                 Command::none()
@@ -183,14 +252,20 @@ impl Application for PhotoFlow {
             }
             Message::ImageLoaded(path, image) => {
                 debug!("Image loaded: {}", path.display());
-                if let Some(image) = image {
-                    // Find the photo with matching path and update it
-                    if let Some(photo) = self.photos.iter_mut().find(|p| p.path() == path) {
-                        photo.set_image(image);
+                if let Some(index) = self.photo_paths.iter().position(|p| p == &path) {
+                    // Create new photo if it doesn't exist
+                    if self.photos[index].is_none() {
+                        if let Ok(mut photo) = Photo::new(path.clone()) {
+                            if let Some(img) = image {
+                                photo.set_image(img);
+                            }
+                            self.photos[index] = Some(photo);
+                        }
+                    } else if let Some(photo) = &mut self.photos[index] {
+                        if let Some(img) = image {
+                            photo.set_image(img);
+                        }
                     }
-                } else {
-                    info!("Failed to load image: {}", path.display());
-                    self.error = Some(format!("Failed to load image: {}", path.display()));
                 }
                 Command::none()
             }
@@ -198,6 +273,9 @@ impl Application for PhotoFlow {
     }
 
     fn view(&self) -> Element<Message> {
+        let current_photo = self.current_photo
+            .and_then(|i| self.photos[i].as_ref());
+        
         let controls = row![
             button("Previous").on_press(Message::PreviousPhoto),
             button("Load Directory").on_press(Message::LoadDirectory),
@@ -205,14 +283,10 @@ impl Application for PhotoFlow {
         ]
         .spacing(10);
 
-        let content = if let Some(current) = self.current_photo {
-            if let Some(photo) = self.photos.get(current) {
-                self.photo_view.view(photo)
-            } else {
-                text("No photo selected").into()
-            }
+        let content = if let Some(photo) = current_photo {
+            self.photo_view.view(photo)
         } else {
-            text("No photos loaded").into()
+            text("No photo selected").into()
         };
 
         let error_text = if let Some(error) = &self.error {

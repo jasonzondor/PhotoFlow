@@ -1,8 +1,6 @@
-use std::path::PathBuf;
-use std::fs;
-
 use iced::{
-    widget::{column, container, row, text, Column, Container, Image},
+    advanced::image::Handle,
+    widget::{column, container, text, Image},
     Element, Length,
 };
 
@@ -61,22 +59,12 @@ impl PhotoView {
 
         // Create the image widget
         let image_widget = if let Some(img) = &photo.image {
-            // Save the image to a temporary file
-            let temp_dir = std::env::temp_dir();
-            let temp_path = temp_dir.join(format!("photoflow_temp_{}.jpg", 
-                photo.path().file_name().unwrap_or_default().to_string_lossy()));
-            
-            if img.save(&temp_path).is_ok() {
-                Image::new(temp_path)
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-            } else {
-                Image::new(PathBuf::new())
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-            }
+            // The image should already be in RGB8 format
+            Image::new(Handle::from_memory(photo.get_rgb_data()))
+                .width(Length::Fill)
+                .height(Length::Fill)
         } else {
-            Image::new(PathBuf::new())
+            Image::new(Handle::from_memory(Vec::new()))
                 .width(Length::Fill)
                 .height(Length::Fill)
         };
