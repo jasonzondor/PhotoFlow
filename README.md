@@ -33,12 +33,13 @@ cargo run
 ## Project Structure
 
 ```
-photo_flow/
+.
 ├── src/
 │   ├── main.rs      # Application entry point and state management
 │   ├── photo.rs     # Photo loading and metadata handling
 │   └── ui.rs        # User interface components
-└── Cargo.toml       # Project dependencies and configuration
+├── Cargo.toml       # Project dependencies and configuration
+└── README.md        # Project documentation
 ```
 
 ## License
