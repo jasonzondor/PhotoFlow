@@ -10,6 +10,7 @@ use anyhow::Result;
 
 mod photo;
 mod ui;
+mod processors;
 
 use photo::Photo;
 use ui::PhotoView;
