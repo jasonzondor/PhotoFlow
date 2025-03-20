@@ -1,8 +1,11 @@
 use std::path::Path;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
-use anyhow::{Context, Result};
+use anyhow::{Result, Context};
 use tracing::debug;
+
+// Size threshold for using memory mapping (32MB)
+const MMAP_THRESHOLD: u64 = 32 * 1024 * 1024;
 
 #[derive(Debug, PartialEq)]
 pub enum ImageType {
@@ -37,7 +40,6 @@ impl ImageType {
 pub fn detect_image_type(path: &Path) -> Result<ImageType> {
     let mut file = File::open(path).context("Failed to open file for type detection")?;
     let mut buffer = [0u8; 16]; // Most magic numbers are within first 16 bytes
-    
     file.read_exact(&mut buffer).context("Failed to read file header")?;
     
     // First check for common image formats
@@ -62,7 +64,23 @@ pub fn detect_image_type(path: &Path) -> Result<ImageType> {
     }
     
     // Check for TIFF (both little and big endian)
-    if (&buffer[0..4] == b"MM\x00*" || &buffer[0..4] == b"II*\x00") {
+    if &buffer[0..4] == b"MM\x00*" || &buffer[0..4] == b"II*\x00" {
+        // Need to check deeper in the file for Nikon specific markers
+        let mut extended_buffer = [0u8; 4096];
+        file.seek(SeekFrom::Start(0))?;
+        file.read_exact(&mut extended_buffer)?;
+        
+        if extended_buffer.windows(4).any(|window| window == b"NIKON") {
+            debug!("Detected Nikon NEF format");
+            return Ok(ImageType::RawNikon);
+        }
+        
+        // Check for Panasonic RW2
+        if extended_buffer.windows(4).any(|window| window == b"PANA") {
+            debug!("Detected Panasonic RW2 format");
+            return Ok(ImageType::RawPanasonic);
+        }
+        
         debug!("Detected TIFF format");
         return Ok(ImageType::Tiff);
     }
@@ -81,29 +99,10 @@ pub fn detect_image_type(path: &Path) -> Result<ImageType> {
         return Ok(ImageType::RawCanon);
     }
     
-    // Nikon NEF (usually starts with TIFF header)
-    if (&buffer[0..4] == b"MM\x00*" || &buffer[0..4] == b"II*\x00") {
-        // Need to check deeper in the file for Nikon specific markers
-        let mut extended_buffer = [0u8; 4096];
-        file.seek(SeekFrom::Start(0))?;
-        file.read_exact(&mut extended_buffer)?;
-        
-        if extended_buffer.windows(4).any(|window| window == b"NIKON") {
-            debug!("Detected Nikon NEF format");
-            return Ok(ImageType::RawNikon);
-        }
-    }
-    
     // Sony ARW
     if &buffer[0..4] == b"SONY" {
         debug!("Detected Sony ARW format");
         return Ok(ImageType::RawSony);
-    }
-    
-    // Panasonic RW2
-    if &buffer[0..4] == b"IIU\x00" {
-        debug!("Detected Panasonic RW2 format");
-        return Ok(ImageType::RawPanasonic);
     }
     
     // Generic RAW check (look for common RAW markers)

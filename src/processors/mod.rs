@@ -1,6 +1,8 @@
 pub mod raw;
 pub mod standard;
 pub mod detector;
+#[cfg(test)]
+mod tests;
 
 use std::path::Path;
 use anyhow::Result;
