@@ -3,8 +3,12 @@
 ## High Priority
 
 - [ ] Improve RAW file support
-  - [ ] Research and implement better RAW decoding solution
-  - [ ] Add support for Fuji X-T3 RAF files
+  - [ ] Fix Fuji X-T3 RAF support
+    - Current `rawloader` crate doesn't support X-T3
+    - Options:
+      1. Contribute X-T3 support to `rawloader`
+      2. Switch to alternative RAW processing library
+      3. Use external tools (dcraw/libraw) as fallback
   - [ ] Add progress indicator for RAW file loading
   - [ ] Implement RAW file caching for faster loading
 
